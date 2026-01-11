@@ -624,10 +624,17 @@ const char* htmlToolsPage = R"rawliteral(
 </html>
 )rawliteral";
 
-// 检查HTTP Basic认证
-bool checkAuth() {
+// 检查HTTP Basic认证，支持 API 认证
+bool checkAuth(bool isApi = false) {
   if (!server.authenticate(config.webUser.c_str(), config.webPass.c_str())) {
-    server.requestAuthentication(BASIC_AUTH, "SMS Forwarding", "请输入管理员账号密码");
+    if (isApi) {
+      // API 鉴权失败
+      server.sendHeader("WWW-Authenticate", "Basic realm=\"SMS Forwarding\"");
+      server.send(401, "text/plain", "Unauthorized");
+    } else {
+      // Web 鉴权失败，弹窗提示输入用户名密码
+      server.requestAuthentication(BASIC_AUTH, "SMS Forwarding", "请输入管理员账号密码");
+    }
     return false;
   }
   return true;
@@ -1202,6 +1209,38 @@ void handleSendSms() {
   html.replace("%MSG%", resultMsg);
   
   server.send(200, "text/html", html);
+}
+
+// 处理发送短信 API 的请求
+void handleApiSendSms() {
+    if (!checkAuth(true)) return;
+
+    String phone = server.arg("phone");
+    String content = server.arg("content");
+
+    phone.trim();
+    content.trim();
+
+    if (phone.length() == 0) {
+        server.send(400, "text/plain", "Error: phone is required");
+        return;
+    }
+    if (content.length() == 0) {
+        server.send(400, "text/plain", "Error: content is required");
+        return;
+    }
+
+    Serial.println("API 发送短信请求");
+    Serial.println("目标号码: " + phone);
+    Serial.println("短信内容: " + content);
+
+    bool success = sendSMS(phone.c_str(), content.c_str());
+
+    if (success) {
+        server.send(200, "text/plain", "OK: SMS sent successfully");
+    } else {
+        server.send(500, "text/plain", "Error: Failed to send SMS");
+    }
 }
 
 // 处理Ping请求
@@ -2426,6 +2465,7 @@ void setup() {
   server.on("/tools", handleToolsPage);
   server.on("/sms", handleToolsPage);  // 兼容旧链接
   server.on("/sendsms", HTTP_POST, handleSendSms);
+  server.on("/api/sendsms", HTTP_POST, handleApiSendSms);
   server.on("/ping", HTTP_POST, handlePing);
   server.on("/query", handleQuery);
   server.on("/flight", handleFlightMode);
